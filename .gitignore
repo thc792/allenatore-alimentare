@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment (se usi Python)
+venv/
+.venv/
+
+# Visual Studio cache files
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Bb]in/
+[Oo]bj/
+
+# File di configurazione locali con segreti
+config.py # Se contiene segreti, altrimenti no.
+secrets.json
+.env
+
+# Log files
+*.log

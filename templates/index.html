@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Allenatore Alimentare</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>Allenatore Alimentare</h1>
+    </header>
+
+    <main>
+        <p id="welcome-message">{{ message }}</p>
+        
+        <!-- SEZIONE RICERCA ALIMENTO ESISTENTE -->
+        <section id="search-section">
+            <h2>Cerca un Alimento</h2>
+            <div class="search-controls">
+                <label for="search-query">Nome prodotto:</label>
+                <input type="text" id="search-query" name="search-query" placeholder="Es. pasta, biscotti, ...">
+                <button id="search-button">Cerca</button>
+            </div>
+            <div id="results-area">
+                <p>I risultati della ricerca appariranno qui...</p>
+            </div>
+        </section>
+
+        <hr class="section-divider"> <!-- Separatore visuale -->
+
+        <!-- NUOVA SEZIONE PER DATI UTENTE E CALCOLO FABBISOGNO -->
+        <section id="user-data-section">
+            <h2>Calcola il Tuo Fabbisogno</h2>
+            <form id="user-data-form">
+                <div>
+                    <label for="age">Età (anni):</label>
+                    <input type="number" id="age" name="age" required min="1" max="120">
+                </div>
+                <div>
+                    <label for="weight">Peso (kg):</label>
+                    <input type="number" id="weight" name="weight" step="0.1" required min="1">
+                </div>
+                <div>
+                    <label for="height">Altezza (cm):</label>
+                    <input type="number" id="height" name="height" required min="1">
+                </div>
+                <div>
+                    <label for="gender">Sesso Biologico:</label>
+                    <select id="gender" name="gender" required>
+                        <option value="">Seleziona...</option>
+                        <option value="male">Maschio</option>
+                        <option value="female">Femmina</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="activity-level">Livello di Attività Fisica:</label>
+                    <select id="activity-level" name="activity_level" required>
+                        <option value="">Seleziona...</option>
+                        <option value="sedentary">Sedentario (poco o nessun esercizio)</option>
+                        <option value="light">Leggermente attivo (esercizio leggero/sport 1-3 giorni/sett.)</option>
+                        <option value="moderate">Moderatamente attivo (esercizio moderato/sport 3-5 giorni/sett.)</option>
+                        <option value="active">Molto attivo (esercizio intenso/sport 6-7 giorni/sett.)</option>
+                        <option value="extra_active">Estremamente attivo (esercizio molto intenso/lavoro fisico)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="profession">Professione (opzionale, per dettaglio attività):</label>
+                    <input type="text" id="profession" name="profession" placeholder="Es. impiegato, muratore, studente">
+                </div>
+                <div>
+                    <label for="objectives">Obiettivi (es. perdere peso, mantenimento, massa):</label>
+                    <textarea id="objectives" name="objectives" rows="3" required placeholder="Descrivi i tuoi obiettivi..."></textarea>
+                </div>
+                <div>
+                    <button type="submit" id="calculate-needs-button">Calcola Fabbisogno</button>
+                </div>
+            </form>
+            <div id="needs-results-area">
+                <p>Il tuo fabbisogno calorico e nutrizionale consigliato apparirà qui...</p>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>© 2024 Il Tuo Allenatore Alimentare</p>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            
+            // --- JAVASCRIPT PER LA RICERCA PRODOTTI (ESISTENTE) ---
+            const searchButton = document.getElementById('search-button');
+            const searchQueryInput = document.getElementById('search-query');
+            const resultsArea = document.getElementById('results-area');
+
+            if (searchButton) { // Controlla se il pulsante di ricerca esiste
+                searchButton.addEventListener('click', function() {
+                    const query = searchQueryInput.value.trim(); 
+
+                    if (query === "") {
+                        resultsArea.innerHTML = '<p style="color: red;">Per favore, inserisci un termine di ricerca.</p>';
+                        return; 
+                    }
+
+                    resultsArea.innerHTML = '<p>Ricerca in corso...</p>';
+
+                    fetch(`/api/search_food?query=${encodeURIComponent(query)}`)
+                        .then(response => {
+                            if (!response.ok) {
+                                return response.json().then(errData => {
+                                    throw new Error(errData.error || `Errore dal server: ${response.status}`);
+                                });
+                            }
+                            return response.json(); 
+                        })
+                        .then(data => {
+                            displaySearchResults(data); 
+                        })
+                        .catch(error => {
+                            console.error('Errore durante la ricerca dei prodotti:', error);
+                            resultsArea.innerHTML = `<p style="color: red;">Si è verificato un errore durante la ricerca: ${error.message}</p>`;
+                        });
+                });
+            }
+
+            function displaySearchResults(products) {
+                if (!products || products.length === 0) {
+                    resultsArea.innerHTML = '<p>Nessun prodotto trovato per la tua ricerca.</p>';
+                    return;
+                }
+
+                let htmlContent = '<ul>';
+                products.forEach(product => {
+                    htmlContent += `<li>`;
+                    if (product.image_url) {
+                        htmlContent += `<img src="${product.image_url}" alt="${product.name || 'Immagine prodotto'}" style="width: 50px; height: 50px; margin-right: 10px; vertical-align: middle;">`;
+                    }
+                    htmlContent += `<strong>${product.name || 'Nome non disponibile'}</strong>`;
+                    if (product.brands) {
+                        htmlContent += ` - <em>${product.brands}</em>`;
+                    }
+                    htmlContent += `<br>`;
+                    htmlContent += `<small>`;
+                    if (product.calories_100g !== null && product.calories_100g !== undefined) {
+                        htmlContent += `Calorie (100g): ${product.calories_100g} kcal | `;
+                    }
+                    if (product.protein_100g !== null && product.protein_100g !== undefined) {
+                         htmlContent += `Proteine: ${product.protein_100g}g | `;
+                    }
+                    if (product.carbs_100g !== null && product.carbs_100g !== undefined) {
+                        htmlContent += `Carboidrati: ${product.carbs_100g}g | `;
+                    }
+                    if (product.fat_100g !== null && product.fat_100g !== undefined) {
+                        htmlContent += `Grassi: ${product.fat_100g}g`;
+                    }
+                    if (htmlContent.endsWith(' | ')) {
+                       htmlContent = htmlContent.slice(0, -3);
+                    }
+                    htmlContent += `</small>`;
+                    htmlContent += `</li>`;
+                });
+                htmlContent += '</ul>';
+                resultsArea.innerHTML = htmlContent;
+            }
+
+            if (searchQueryInput) { // Controlla se l'input di ricerca esiste
+                searchQueryInput.addEventListener('keypress', function(event) {
+                    if (event.key === 'Enter') {
+                        event.preventDefault(); 
+                        if (searchButton) searchButton.click(); 
+                    }
+                });
+            }
+
+            // --- NUOVO JAVASCRIPT PER IL FORM DATI UTENTE ---
+            const userDataForm = document.getElementById('user-data-form');
+            const needsResultsArea = document.getElementById('needs-results-area');
+            // Il pulsante per il calcolo è già definito come `calculateNeedsButton` implicitamente dal suo id,
+            // ma è meglio selezionarlo esplicitamente se volessimo aggiungerci un event listener specifico diverso da 'submit' del form.
+
+            if (userDataForm) {
+                userDataForm.addEventListener('submit', function(event) {
+                    event.preventDefault(); 
+
+                    const formData = new FormData(userDataForm);
+                    const data = Object.fromEntries(formData.entries()); 
+
+                    needsResultsArea.innerHTML = '<p>Analisi dei tuoi dati in corso con Gemini...</p>';
+                    console.log("Dati utente inviati:", data); 
+
+                    fetch('/api/calculate_needs', { 
+                        method: 'POST', 
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(data), 
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            return response.json().then(errData => {
+                                throw new Error(errData.error || `Errore dal server: ${response.status} - ${errData.message || 'Nessun dettaglio'}`);
+                            });
+                        }
+                        return response.json();
+                    })
+                    .then(result => {
+                        console.log("Risultato da /api/calculate_needs:", result);
+                        let resultHTML = `<h3>Consigli Nutrizionali:</h3>`;
+                        if (result.error) {
+                            resultHTML += `<p style="color: red;">${result.error}</p>`;
+                        } else {
+                            resultHTML += `
+                                <p><strong>Fabbisogno Calorico Stimato:</strong> ${result.calories || 'Non disponibile'} kcal</p>
+                                <p><strong>Proteine:</strong> ${result.protein || 'Non disponibile'} g</p>
+                                <p><strong>Carboidrati:</strong> ${result.carbs || 'Non disponibile'} g</p>
+                                <p><strong>Grassi:</strong> ${result.fat || 'Non disponibile'} g</p>
+                                <p><em>${result.notes || ''}</em></p>
+                            `;
+                        }
+                        needsResultsArea.innerHTML = resultHTML;
+                    })
+                    .catch(error => {
+                        console.error('Errore durante il calcolo del fabbisogno:', error);
+                        needsResultsArea.innerHTML = `<p style="color: red;">Si è verificato un errore durante il calcolo: ${error.message}</p>`;
+                    });
+                });
+            }
+        });
+    </script>
+</body>
+</html>
