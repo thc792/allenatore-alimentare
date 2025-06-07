@@ -15,7 +15,7 @@
         <p id="welcome-message">{{ message }}</p>
         
         <div class="content-wrapper">
-           <!-- SEZIONE RICERCA ALIMENTO ESISTENTE - TEMPORANEAMENTE NASCOSTA
+            <!-- SEZIONE RICERCA ALIMENTO ESISTENTE -->
             <section id="search-section">
                 <h2>Cerca un Alimento</h2>
                 <div class="search-controls">
@@ -205,9 +205,11 @@
                     .then(response => {
                         if (!response.ok) {
                             return response.json().then(errData => {
-                                // Gestione dell'errore specifico da Gemini che hai mostrato
                                 if (errData.message && errData.message.includes("API Key not valid")) {
                                      throw new Error("Servizio Gemini non disponibile (configurazione SDK fallita o API Key mancante).");
+                                }
+                                if (errData.error && errData.error.includes("API Key not valid")) { // Controllo più generico
+                                    throw new Error("Servizio Gemini non disponibile (configurazione SDK fallita o API Key mancante).");
                                 }
                                 throw new Error(errData.error || `Errore dal server: ${response.status} - ${errData.message || 'Nessun dettaglio'}`);
                             });
@@ -217,9 +219,9 @@
                     .then(result => {
                         console.log("Risultato da /api/calculate_needs:", result);
                         let resultHTML = `<h3>Consigli Nutrizionali:</h3>`;
-                        if (result.error) { // Errore gestito proveniente dal nostro backend o da gemini_service
+                        if (result.error) { 
                             resultHTML += `<p style="color: red;">${result.error}</p>`;
-                        } else if (result.calories !== undefined) { // Successo e dati presenti
+                        } else if (result.calories !== undefined) { 
                             resultHTML += `
                                 <p><strong>Fabbisogno Calorico Stimato:</strong> ${result.calories || 'Non disponibile'} kcal</p>
                                 <p><strong>Proteine:</strong> ${result.protein || 'Non disponibile'} g</p>
@@ -227,7 +229,15 @@
                                 <p><strong>Grassi:</strong> ${result.fat || 'Non disponibile'} g</p>
                                 <p><em>${result.notes || ''}</em></p>
                             `;
-                        } else { // Risposta inattesa
+                            // VISUALIZZARE I CONSIGLI PERSONALIZZATI
+                            if (result.personalized_advice && Array.isArray(result.personalized_advice) && result.personalized_advice.length > 0) {
+                                resultHTML += `<h4>Consigli Personalizzati:</h4><ul>`;
+                                result.personalized_advice.forEach(advice_item => {
+                                    resultHTML += `<li>${advice_item}</li>`;
+                                });
+                                resultHTML += `</ul>`;
+                            }
+                        } else { 
                              resultHTML += `<p style="color: orange;">Risposta ricevuta dal servizio non interpretabile.</p>`;
                         }
                         needsResultsArea.innerHTML = resultHTML;
@@ -240,9 +250,9 @@
             }
 
             // JavaScript per il campo "Altro" del tipo di dieta (se lo aggiungerai)
-            const dietTypeSelect = document.getElementById('diet-type');
-            const dietTypeOtherContainer = document.getElementById('diet-type-other-container');
-            const dietTypeOtherInput = document.getElementById('diet-type-other');
+            const dietTypeSelect = document.getElementById('diet-type'); // Questo ID non esiste ancora nell'HTML fornito
+            const dietTypeOtherContainer = document.getElementById('diet-type-other-container'); // Questo ID non esiste ancora
+            const dietTypeOtherInput = document.getElementById('diet-type-other'); // Questo ID non esiste ancora
 
             if (dietTypeSelect && dietTypeOtherContainer) {
                 dietTypeSelect.addEventListener('change', function() {
@@ -257,10 +267,12 @@
                         }
                     }
                 });
-                // Nascondi all'inizio se non è 'other'
+                // Nascondi all'inizio se non è 'other' e se gli elementi esistono
                 if (dietTypeSelect.value !== 'other') {
                      dietTypeOtherContainer.style.display = 'none';
                 }
+            } else {
+                // console.warn("Elementi per la gestione della dieta 'Altro' non trovati nel DOM.");
             }
         });
     </script>
