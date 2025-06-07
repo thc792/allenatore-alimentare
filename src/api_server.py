@@ -1,123 +1,141 @@
 # src/api_server.py
 
-from flask import Flask, render_template, jsonify, request 
-
-# --- BLOCCO IMPORT PER search_products_by_name ---
-import sys
 import os
+import traceback # Per debugging più dettagliato degli errori
+from flask import Flask, jsonify, request, send_from_directory, render_template
+from flask_cors import CORS # Necessario se il frontend e backend sono su porte/domini diversi in sviluppo
 
-# Calcola il percorso della root del progetto in modo robusto
-# __file__ è il percorso di questo file (api_server.py)
-# os.path.dirname(__file__) è la cartella 'src'
-# os.path.dirname(os.path.dirname(__file__)) è la root del progetto 'allenatore-alimentare'
-PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Importa i tuoi moduli personalizzati
+from integrations import openfoodfacts_client
+from integrations import gemini_service # Assumendo che le modifiche siano qui
 
-# Aggiungi la root del progetto a sys.path se non è già presente
-# Questo aiuta Python a trovare i moduli nella cartella 'src'
-if PROJECT_ROOT_DIR not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT_DIR)
-
-# Ora prova a importare i moduli
-try:
-    from src.integrations.openfoodfacts_client import search_products_by_name
-    print("INFO (api_server): 'search_products_by_name' importato con successo.")
-except ModuleNotFoundError:
-    print("ERRORE CRITICO (api_server): Modulo 'src.integrations.openfoodfacts_client' o 'search_products_by_name' non trovato.")
-    search_products_by_name = None 
-except ImportError as e:
-    print(f"ERRORE CRITICO (api_server): ImportError durante l'import di search_products_by_name: {e}")
-    search_products_by_name = None
-# --- FINE BLOCCO IMPORT ---
-
-# --- NUOVO BLOCCO IMPORT PER gemini_service ---
-try:
-    from src.integrations.gemini_service import get_nutritional_advice_from_gemini
-    print("INFO (api_server): 'get_nutritional_advice_from_gemini' importato con successo.")
-except ModuleNotFoundError:
-    print("ERRORE CRITICO (api_server): Modulo 'src.integrations.gemini_service' o 'get_nutritional_advice_from_gemini' non trovato.")
-    get_nutritional_advice_from_gemini = None
-except ImportError as e:
-    print(f"ERRORE CRITICO (api_server): ImportError durante l'import di get_nutritional_advice_from_gemini: {e}")
-    get_nutritional_advice_from_gemini = None
-# --- FINE NUOVO BLOCCO IMPORT ---
-
-
-# Inizializzazione dell'app Flask
-# Flask cercherà 'templates' e 'static' RELATIVAMENTE ALLA POSIZIONE DI QUESTO FILE SORGENTE
-# quindi se api_server.py è in 'src/', e 'templates' e 'static' sono nella root del progetto
-# (un livello sopra 'src/'), i percorsi corretti sono '../templates' e '../static'.
+# Inizializzazione dell'applicazione Flask
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
 
+# Configurazione CORS - Utile per lo sviluppo locale se frontend e backend sono su porte diverse.
+# Per Vercel, potrebbe non essere strettamente necessario se tutto è servito dallo stesso dominio,
+# ma è una buona pratica averlo per flessibilità.
+CORS(app, resources={r"/api/*": {"origins": "*"}}) # Permette richieste da qualsiasi origine per gli endpoint API
+
+# ----- Configurazione per servire i file statici e l'index.html -----
+
 @app.route('/')
-def index_page():
-    # Questa rotta serve la pagina HTML principale.
-    # Il messaggio può essere passato al template, se necessario.
-    return render_template('index.html', message="Benvenuto nel tuo Allenatore Alimentare!")
+def index():
+    """Serve la pagina principale index.html."""
+    return render_template('index.html')
+
+@app.route('/static/<path:path>')
+def send_static(path):
+    """Serve file statici (CSS, JS, immagini) dalla cartella static."""
+    return send_from_directory(app.static_folder, path)
+
+# ----- API Endpoints -----
 
 @app.route('/api/search_food', methods=['GET'])
-def api_search_food():
-    search_query = request.args.get('query', '') 
-    if not search_query:
-        return jsonify({"error": "La query di ricerca non può essere vuota"}), 400
-    
-    if search_products_by_name is None:
-        # Questo succede se l'import iniziale di search_products_by_name è fallito
-        print("API ERRORE (api_search_food): La funzione 'search_products_by_name' non è disponibile.")
-        return jsonify({"error": "Servizio di ricerca prodotti non disponibile (configurazione interna)."}), 500
-    
-    print(f"API (api_search_food): Ricevuta ricerca per: '{search_query}'")
-    # Chiama la funzione per cercare prodotti, specificando un limite di risultati e la lingua
-    results = search_products_by_name(query=search_query, page_size=10, lang="it")
-    
-    if results is None:
-        # Questo potrebbe accadere se c'è un errore di rete o un problema con l'API di Open Food Facts
-        print(f"API ERRORE (api_search_food): Errore cercando '{search_query}' con OpenFoodFacts.")
-        return jsonify({"error": "Errore durante la comunicazione con il database alimentare esterno"}), 503 # 503 Service Unavailable
+def search_food_api():
+    """
+    Endpoint per cercare alimenti tramite Open Food Facts.
+    Accetta 'query' o 'barcode' come parametri GET.
+    """
+    query = request.args.get('query')
+    barcode = request.args.get('barcode')
+
+    if not query and not barcode:
+        return jsonify({"error": "Parametro 'query' o 'barcode' mancante."}), 400
+
+    try:
+        if barcode:
+            # print(f"DEBUG: Ricerca per barcode: {barcode}")
+            results = openfoodfacts_client.search_product_by_barcode(barcode)
+        else:
+            # print(f"DEBUG: Ricerca per query: {query}")
+            results = openfoodfacts_client.search_products_by_name(query)
         
-    print(f"API (api_search_food): Trovati {len(results)} risultati per '{search_query}'.")
-    return jsonify(results)
+        # print(f"DEBUG: Risultati da OpenFoodFacts: {results}")
+        if "error" in results:
+            return jsonify(results), 500 # Se il client restituisce un errore interno
+        return jsonify(results)
+    except Exception as e:
+        # print(f"ERRORE in /api/search_food: {str(e)}")
+        # traceback.print_exc()
+        return jsonify({"error": "Errore durante la ricerca dell'alimento.", "details": str(e)}), 500
 
 @app.route('/api/calculate_needs', methods=['POST'])
-def api_calculate_needs():
-    if not request.is_json:
-        return jsonify({"error": "La richiesta deve essere in formato JSON"}), 400
+def calculate_needs_api():
+    """
+    Endpoint per calcolare il fabbisogno nutrizionale utilizzando Gemini.
+    Riceve i dati dell'utente in formato JSON.
+    """
+    try:
+        user_data = request.json
+        # print(f"DEBUG: Dati ricevuti dal frontend per calcolo fabbisogno: {user_data}")
 
-    user_data = request.get_json()
-    if not user_data:
-        return jsonify({"error": "Corpo della richiesta JSON mancante o vuoto"}), 400
+        # Estrazione dei dati obbligatori
+        age = user_data.get('age')
+        weight = user_data.get('weight')
+        height = user_data.get('height')
+        gender = user_data.get('gender')
+        activity_level = user_data.get('activity_level')
+        goals = user_data.get('goals')
+
+        # Estrazione dei dati opzionali (con default a stringa vuota se non forniti)
+        profession = user_data.get('profession', '')
+        medical_conditions = user_data.get('medical_conditions', '').strip()
+        food_allergies = user_data.get('food_allergies', '').strip()
+        food_intolerances = user_data.get('food_intolerances', '').strip()
+
+        # Validazione base dei dati obbligatori
+        required_fields = {
+            "età (age)": age, "peso (weight)": weight, "altezza (height)": height,
+            "sesso (gender)": gender, "livello di attività (activity_level)": activity_level,
+            "obiettivi (goals)": goals
+        }
+        missing_fields = [name for name, value in required_fields.items() if not value]
+        if missing_fields:
+            return jsonify({"error": f"Dati utente incompleti. Campi mancanti: {', '.join(missing_fields)}"}), 400
+
+        # Chiamata al servizio Gemini con tutti i dati, inclusi quelli opzionali
+        advice = gemini_service.get_nutritional_advice_from_gemini(
+            age=age,
+            weight=weight,
+            height=height,
+            gender=gender,
+            activity_level=activity_level,
+            profession=profession,
+            goals=goals,
+            medical_conditions=medical_conditions,
+            food_allergies=food_allergies,
+            food_intolerances=food_intolerances
+        )
         
-    print(f"API (api_calculate_needs): Ricevuti dati utente per calcolo fabbisogno: {user_data}")
+        # print(f"DEBUG: Risposta da gemini_service.get_nutritional_advice_from_gemini: {advice}")
+        
+        if "error" in advice:
+            # Se gemini_service restituisce un errore, propagalo con uno status code appropriato
+            # (assumendo che il servizio possa impostare 'status_code' nel dizionario di errore)
+            status_code = advice.get("status_code", 500) # Default a 500 se non specificato
+            return jsonify(advice), status_code
+            
+        return jsonify(advice)
 
-    if get_nutritional_advice_from_gemini is None:
-        # Questo succede se l'import iniziale di get_nutritional_advice_from_gemini è fallito
-        print("API ERRORE (api_calculate_needs): La funzione 'get_nutritional_advice_from_gemini' non è disponibile.")
-        return jsonify({"error": "Servizio di consulenza nutrizionale non disponibile (configurazione interna)."}), 500
+    except TypeError as e: # Potrebbe accadere se request.json è None (es. Content-Type non corretto)
+        # print(f"ERRORE in /api/calculate_needs (TypeError): {str(e)}")
+        # traceback.print_exc()
+        return jsonify({"error": "Dati non validi o mancanti nella richiesta. Assicurati che Content-Type sia application/json.", "details": str(e)}), 400
+    except Exception as e:
+        # print(f"ERRORE in /api/calculate_needs (Exception generica): {str(e)}")
+        # traceback.print_exc()
+        return jsonify({"error": "Errore interno del server durante il calcolo del fabbisogno.", "details": str(e)}), 500
 
-    print("API (api_calculate_needs): Chiamata a get_nutritional_advice_from_gemini in corso...")
-    advice = get_nutritional_advice_from_gemini(user_data)
+# ----- Per l'esecuzione locale -----
 
-    if advice is None:
-        # Questo potrebbe accadere se c'è un errore non gestito internamente in get_nutritional_advice_from_gemini
-        print("API ERRORE (api_calculate_needs): la funzione get_nutritional_advice_from_gemini ha restituito None inaspettatamente.")
-        return jsonify({"error": "Errore imprevisto durante l'elaborazione della richiesta di consulenza nutrizionale."}), 500
-    
-    if isinstance(advice, dict) and "error" in advice:
-        # Errore specifico restituito da gemini_service (es. API Key mancante, errore API Gemini)
-        print(f"API (api_calculate_needs): Errore ricevuto da gemini_service: {advice['error']}")
-        # Usiamo 503 Service Unavailable se il problema è con il servizio esterno (Gemini)
-        # o una configurazione critica mancante come la chiave API.
-        status_code = 503 if "API Key" in advice["error"] or "servizio AI" in advice["error"].lower() else 500
-        return jsonify(advice), status_code
-
-    print(f"API (api_calculate_needs): Consiglio da Gemini ricevuto: {advice}")
-    return jsonify(advice)
-
-# Questo blocco viene eseguito solo se lo script api_server.py è il file principale eseguito
-# (cioè, con `python src/api_server.py`) e non quando viene importato come modulo.
 if __name__ == '__main__':
-    print("INFO (api_server): Avvio del server di sviluppo Flask...")
-    # debug=True: Abilita il debugger di Flask e il ricaricamento automatico al salvataggio dei file.
-    # host='0.0.0.0': Rende il server accessibile da qualsiasi indirizzo IP sulla macchina,
-    # utile per test da altri dispositivi sulla stessa rete. Per test solo locali, '127.0.0.1' va bene.
-    # port=5000: Specifica la porta su cui il server ascolterà le richieste.
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Caricamento della API Key di Gemini dalle variabili d'ambiente
+    # (gemini_service.py dovrebbe già gestire la configurazione di genai)
+    if not os.environ.get("GEMINI_API_KEY"):
+        print("ATTENZIONE: La variabile d'ambiente GEMINI_API_KEY non è impostata.")
+        print("Il servizio Gemini potrebbe non funzionare correttamente.")
+
+    # Esegui l'app Flask in modalità debug per lo sviluppo locale
+    # Host '0.0.0.0' la rende accessibile da altre macchine nella stessa rete
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)
